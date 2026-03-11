@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Session Viewer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; }
+#loading { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; gap: 16px; color: #888; font-size: 18px; }
+#error { display: none; color: #f87171; text-align: center; margin-top: 20px; font-size: 14px; }
+#chat { max-width: 900px; margin: 0 auto; padding: 20px 16px 80px; display: none; }
+#header { position: sticky; top: 0; background: #1a1a2e; padding: 12px 0; border-bottom: 1px solid #333; margin-bottom: 20px; z-index: 10; display: flex; justify-content: space-between; align-items: center; }
+#header h1 { font-size: 16px; color: #a78bfa; }
+.msg { margin-bottom: 16px; padding: 12px 16px; border-radius: 10px; line-height: 1.6; overflow-wrap: break-word; }
+.msg-user { background: #2a2a4a; border-left: 3px solid #a78bfa; }
+.msg-assistant { background: #1e2a1e; border-left: 3px solid #4ade80; }
+.msg-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.msg-user .msg-label { color: #a78bfa; }
+.msg-assistant .msg-label { color: #4ade80; }
+.msg-time { font-size: 11px; color: #666; float: right; }
+.thinking { background: #252530; border: 1px solid #383848; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 13px; color: #888; max-height: 120px; overflow: hidden; cursor: pointer; position: relative; transition: max-height 0.3s; }
+.thinking::after { content: 'click to expand'; position: absolute; bottom: 0; left: 0; right: 0; text-align: center; background: linear-gradient(transparent, #252530); padding: 16px 0 4px; font-size: 11px; color: #666; }
+.thinking.expanded { max-height: none; }
+.thinking.expanded::after { display: none; }
+.tool-call { background: #1e1e30; border: 1px solid #383850; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 13px; }
+.tool-name { color: #60a5fa; font-weight: 600; font-size: 12px; }
+.tool-input { color: #aaa; margin-top: 4px; }
+.tool-result { background: #1a1a28; border: 1px solid #333; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 12px; color: #888; max-height: 200px; overflow: auto; }
+pre { background: #111; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace; margin: 8px 0; white-space: pre-wrap; }
+code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; background: #252535; padding: 1px 5px; border-radius: 3px; }
+pre code { background: none; padding: 0; }
+p { margin: 6px 0; }
+a { color: #60a5fa; }
+</style>
+</head>
+<body>
+<div id="loading">Loading session...</div>
+<div id="error"></div>
+<div id="chat">
+  <div id="header">
+    <h1 id="session-title">Session</h1>
+  </div>
+  <div id="messages"></div>
+</div>
+
+<script>
+const loadingEl = document.getElementById('loading');
+const errorEl = document.getElementById('error');
+const chat = document.getElementById('chat');
+const messagesEl = document.getElementById('messages');
+
+const sessionId = location.hash.slice(1);
+if (!sessionId) {
+  loadingEl.textContent = '';
+  errorEl.style.display = 'block';
+  errorEl.textContent = 'No session ID in URL hash. Use #session-id';
+} else {
+  fetch(`/claude-code-sharer/sessions/${sessionId}.jsonl`)
+    .then(r => {
+      if (!r.ok) throw new Error(`Session not found (${r.status})`);
+      return r.text();
+    })
+    .then(text => {
+      loadingEl.style.display = 'none';
+      render(text, sessionId);
+    })
+    .catch(err => {
+      loadingEl.textContent = '';
+      errorEl.style.display = 'block';
+      errorEl.textContent = err.message;
+    });
+}
+
+function render(text, name) {
+  const lines = text.trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const msgs = lines.filter(l => l.type === 'user' || l.type === 'assistant').sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  const merged = [];
+  const seen = new Set();
+  for (const m of msgs) {
+    if (m.type === 'assistant') {
+      if (seen.has(m.uuid)) continue;
+      seen.add(m.uuid);
+    }
+    merged.push(m);
+  }
+
+  const grouped = [];
+  for (const m of merged) {
+    if (m.type === 'assistant' && m.message?.id) {
+      const last = grouped[grouped.length - 1];
+      if (last && last.type === 'assistant' && last.message?.id === m.message.id) {
+        const content = normalizeContent(m.message.content);
+        last._allContent.push(...content);
+        last.timestamp = m.timestamp;
+        continue;
+      }
+    }
+    m._allContent = normalizeContent(m.message?.content);
+    grouped.push(m);
+  }
+
+  document.getElementById('session-title').textContent = name;
+  document.title = `Session: ${name}`;
+  chat.style.display = 'block';
+  messagesEl.innerHTML = '';
+
+  for (const m of grouped) {
+    if (m.type === 'user') renderUser(m);
+    else if (m.type === 'assistant') renderAssistant(m);
+  }
+}
+
+function normalizeContent(content) {
+  if (!content) return [];
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  if (Array.isArray(content)) return content;
+  return [content];
+}
+
+function renderUser(m) {
+  const content = normalizeContent(m.message?.content);
+  const text = content.map(c => c.text || '').join('\n').trim();
+  if (!text) return;
+  const div = document.createElement('div');
+  div.className = 'msg msg-user';
+  div.innerHTML = `<div class="msg-label">User <span class="msg-time">${fmtTime(m.timestamp)}</span></div>` + renderMarkdown(text);
+  messagesEl.appendChild(div);
+}
+
+function renderAssistant(m) {
+  const blocks = m._allContent || [];
+  if (!blocks.length) return;
+  const hasVisible = blocks.some(b => b.type === 'text' || b.type === 'tool_use' || b.type === 'tool_result');
+  const hasThinking = blocks.some(b => b.type === 'thinking');
+  if (!hasVisible && !hasThinking) return;
+
+  const div = document.createElement('div');
+  div.className = 'msg msg-assistant';
+  let html = `<div class="msg-label">Assistant <span class="msg-time">${fmtTime(m.timestamp)}</span></div>`;
+
+  for (const block of blocks) {
+    if (block.type === 'thinking' && block.thinking) {
+      html += `<div class="thinking" onclick="this.classList.toggle('expanded')">${esc(block.thinking)}</div>`;
+    } else if (block.type === 'text' && block.text?.trim()) {
+      html += renderMarkdown(block.text);
+    } else if (block.type === 'tool_use') {
+      html += `<div class="tool-call"><span class="tool-name">${esc(block.name || 'tool')}</span>`;
+      if (block.input) {
+        const inp = typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2);
+        const short = inp.length > 300 ? inp.slice(0, 300) + '...' : inp;
+        html += `<div class="tool-input"><pre><code>${esc(short)}</code></pre></div>`;
+      }
+      html += `</div>`;
+    } else if (block.type === 'tool_result') {
+      const content = Array.isArray(block.content) ? block.content.map(c => c.text || '').join('\n') : (block.content || '');
+      if (content.trim()) {
+        const short = content.length > 500 ? content.slice(0, 500) + '...' : content;
+        html += `<div class="tool-result"><pre>${esc(short)}</pre></div>`;
+      }
+    }
+  }
+
+  div.innerHTML = html;
+  messagesEl.appendChild(div);
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function esc(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderMarkdown(text) {
+  let html = esc(text);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code}</code></pre>`);
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+</script>
+</body>
+</html>
