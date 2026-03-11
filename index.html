@@ -56,7 +56,7 @@ if (!sessionId) {
   errorEl.style.display = 'block';
   errorEl.textContent = 'No session ID in URL hash. Use #session-id';
 } else {
-  fetch(`/claude-code-sharer/sessions/${sessionId}.jsonl`)
+  fetch(`sessions/${sessionId}.jsonl`)
     .then(r => {
       if (!r.ok) throw new Error(`Session not found (${r.status})`);
       return r.text();
