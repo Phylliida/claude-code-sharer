@@ -26,7 +26,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .tool-call { background: #1e1e30; border: 1px solid #383850; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 13px; }
 .tool-name { color: #60a5fa; font-weight: 600; font-size: 12px; }
 .tool-input { color: #aaa; margin-top: 4px; }
-.tool-result { background: #1a1a28; border: 1px solid #333; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 12px; color: #888; max-height: 200px; overflow: auto; }
+.tool-result { background: #1a1a28; border: 1px solid #333; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 12px; color: #888; }
 pre { background: #111; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace; margin: 8px 0; white-space: pre-wrap; }
 code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; background: #252535; padding: 1px 5px; border-radius: 3px; }
 pre code { background: none; padding: 0; }
@@ -149,15 +149,13 @@ function renderAssistant(m) {
       html += `<div class="tool-call"><span class="tool-name">${esc(block.name || 'tool')}</span>`;
       if (block.input) {
         const inp = typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2);
-        const short = inp.length > 300 ? inp.slice(0, 300) + '...' : inp;
-        html += `<div class="tool-input"><pre><code>${esc(short)}</code></pre></div>`;
+        html += `<div class="tool-input"><pre><code>${esc(inp)}</code></pre></div>`;
       }
       html += `</div>`;
     } else if (block.type === 'tool_result') {
       const content = Array.isArray(block.content) ? block.content.map(c => c.text || '').join('\n') : (block.content || '');
       if (content.trim()) {
-        const short = content.length > 500 ? content.slice(0, 500) + '...' : content;
-        html += `<div class="tool-result"><pre>${esc(short)}</pre></div>`;
+        html += `<div class="tool-result"><pre>${esc(content)}</pre></div>`;
       }
     }
   }
